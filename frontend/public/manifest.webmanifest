@@ -1,0 +1,13 @@
+{
+  "name": "Bayaan - Live Translation",
+  "short_name": "Bayaan",
+  "description": "Live translation captions for mosque sermons",
+  "start_url": "/r/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0b3d2e",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

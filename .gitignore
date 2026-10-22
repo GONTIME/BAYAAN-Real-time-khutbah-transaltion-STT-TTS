@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+*.db
+*.bak
+*.log
+*.md
+!README.md
+!HOW_TO_RUN_AND_USE_BAYAAN.md
+storage/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+.control_panel_state.json
+
+# Node (frontend)
+node_modules/
+dist/

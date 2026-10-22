@@ -1,0 +1,40 @@
+# BAYAAN local services:
+#   db             -> a real PostgreSQL database (ADR-0001 production target)
+#   libretranslate -> self-hosted machine translation for real MT (§63/§186)
+#
+# Start everything:  docker compose up -d
+# Start only the DB: docker compose up -d db
+#
+# Then set BAYAAN_DATABASE__URL (and optionally the LibreTranslate provider)
+# as shown in backend/.env.example. Full guide: docs/DATABASE.md
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bayaan
+      POSTGRES_PASSWORD: bayaan
+      POSTGRES_DB: bayaan
+    ports:
+      - "5432:5432"
+    volumes:
+      - bayaan_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bayaan"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    environment:
+      # Only the languages BAYAAN needs (Arabic source -> en/it targets).
+      - LT_LOAD_ONLY=ar,en,it
+    ports:
+      - "5000:5000"
+    # Optional API-key protection: set LT_API_KEYS=true and add
+    # BAYAAN_PROVIDERS__LIBRE_API_KEY to match (see backend/.env.example).
+    restart: unless-stopped
+
+volumes:
+  bayaan_pgdata:

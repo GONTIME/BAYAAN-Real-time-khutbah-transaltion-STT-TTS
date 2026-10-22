@@ -1,0 +1,1 @@
+"""Operational runtime package (§179 ops separation, §195 Alerts/Watchdog)."""
