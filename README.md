@@ -81,7 +81,7 @@ npm --version
 1. Clone the repo:
 ```powershell
 git clone <repo-url>
-cd Trans_Sys
+cd BAYAAN-Real-time-khutbah-transaltion-STT-TTS
 ```
 2. Backend (the brain):
 ```powershell
