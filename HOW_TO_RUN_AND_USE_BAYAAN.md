@@ -19,14 +19,14 @@ Imam speaks Arabic into mixer
 
 There are **2 parts**:
 
-1. **Backend** = the brain. A Python program that runs on your PC. It does transcription, translation, safety checks, and — when you use one — the video/camera relaying.
-2. **Frontend** = the face. A website that people open on their phones to read captions, that you open on your PC to prepare sermons and control the broadcast, and that runs the projector screen.
+1. **Backend** =  A Python program that runs on your PC. It does transcription, translation, safety checks, and — when you use one — the video/camera relaying.
+2. **Frontend** = A website that people open on their phones to read captions, that you open on your PC to prepare sermons and control the broadcast, and that runs the projector screen.
 
 You will run both on the **same PC** for testing. In a real mosque, the PC stays near the mixer and phones connect over Wi-Fi.
 
 What you will be able to do after this guide:
 
-- Start the brain (backend) and the face (frontend)
+- Start the backend and the frontend
 - Log in to the operator console
 - Upload a sermon file, review the translation, publish it
 - Create a Room + QR code, join from your phone, see live captions
@@ -40,7 +40,7 @@ What you will be able to do after this guide:
 - [ ] **Python 3.11 or newer** installed. Check like this.
 - [ ] **Node.js 18 or newer** installed (only needed for the website part). Check like this.
 - [ ] **Google Chrome or Microsoft Edge** browser.
-- [ ] The BAYAAN folder on your PC. In this guide it is: `D:\GENERAL AI\Trans_Sys`
+- [ ] The BAYAAN folder on your PC. In this guide it is: `D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS`
 - [ ] Internet for the one-time installations. After that, the demo works offline.
 
 ### 1a. Check if Python is installed (30 seconds)
@@ -73,11 +73,11 @@ If missing: go to `https://nodejs.org/`, download the LTS version, install it, c
 
 ### 1c. Understand the folder layout (look once, no typing)
 
-Open **File Explorer** and go to your BAYAAN folder, e.g. `D:\GENERAL AI\Trans_Sys`. You will see:
+Open **File Explorer** and go to your BAYAAN folder, e.g. `D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS`. You will see:
 
 | Folder / File | What it is (simple) |
 |---|---|
-| `backend` | The brain (Python). You start it first. |
+| `backend` | You start it first. |
 | `backend\.venv` | Python's private toolbox for this project (created once). You do not open it. |
 | `backend\.env` | Secret settings (keys, login, base URLs). Make one from `.env.example` if it is missing. |
 | `frontend` | The website (the phone + admin pages + projector screen). |
@@ -94,16 +94,16 @@ You only do this section the very first time on a new PC. Afterwards, skip to Se
 
 ### Step 1 — Open PowerShell inside the BAYAAN folder (the easy way)
 
-1. Open **File Explorer** to `D:\GENERAL AI\Trans_Sys`.
+1. Open **File Explorer** to `D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS`.
 2. Click the **address bar** at the top (where the folder path shows), type `powershell`, press **Enter**.
 3. A blue window opens, already "standing" inside the BAYAAN folder. ✅ Leave it open — you will use it for everything.
 
-### Step 2 — Set up the backend brain (one-time install)
+### Step 2 — Set up the backend (one-time install)
 
 Copy-paste these **one line at a time** (wait for each to finish before the next):
 
 ```powershell
-cd "D:\GENERAL AI\Trans_Sys\backend"
+cd "D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS\backend"
 ```
 
 What this does: moves ("cd" = change directory) into the `backend` folder. Like double-clicking into it, but for commands.
@@ -131,7 +131,7 @@ What this does: "enters" the toolbox. Your prompt changes to start with `(.venv)
 pip install -e ".[dev]"
 ```
 
-What this does: downloads and installs everything the brain needs (web server, database, PDF reader...). Takes 2–5 minutes. Lots of text scrolling = normal. Wait until you see `Successfully installed ...` at the end.
+What this does: downloads and installs everything the backend needs (web server, database, PDF reader...). Takes 2–5 minutes. Lots of text scrolling = normal. Wait until you see `Successfully installed ...` at the end.
 
 Check it worked:
 
@@ -139,14 +139,14 @@ Check it worked:
 python -m pytest -q
 ```
 
-What this does: runs the 317 self-tests (the brain checking itself). What you want at the end: **`317 passed`**. It takes about one minute. If you see that, the brain is correctly installed. 🎉
+What this does: runs the 317 self-tests (the backend checking itself). What you want at the end: **`317 passed`**. It takes about one minute. If you see that, the backend is correctly installed. 🎉
 
 ### Step 3 — Set up the website (one-time install)
 
 Still in the same blue window (with `(.venv)` showing), run:
 
 ```powershell
-cd "D:\GENERAL AI\Trans_Sys\frontend"
+cd "D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS\frontend"
 npm install --legacy-peer-deps
 ```
 
@@ -172,7 +172,7 @@ BAYAAN_AUTH__OPERATOR_TOKEN_SECRET=a-long-random-string-of-at-least-32-character
 BAYAAN_SECURITY__VISITOR_TOKEN_SECRET=another-long-random-string
 ```
 
-(No quotes needed. If `backend\.env` does not exist, copy `backend\.env.example` to `backend\.env` first and edit that copy. The `.env` file is never shared/committed.)
+(No quotes needed. If `backend\.env` does not exist, copy `backend\.env.example` to `backend\.env` first and edit that copy.)
 
 > The operator key stays valid for 24 hours by default, and the login screen blocks repeated wrong passwords for a short time (that is a security feature, not a bug).
 
@@ -181,31 +181,31 @@ BAYAAN_SECURITY__VISITOR_TOKEN_SECRET=another-long-random-string
 ## 3. Everyday start — do this EVERY time you use BAYAAN (2 minutes)
 
 You need **TWO blue PowerShell windows** open at the same time:
-- Window A = the brain (backend)
-- Window B = the website (frontend)
+- Window A = the backend
+- Window B = the frontend
 
 Think of it like turning on two machines: the kitchen (backend) and the serving counter (frontend). Both must stay ON while you use BAYAAN. **Don't close them.**
 
-### Window A — Start the brain
+### Window A — Start the backend
 
-1. Open a PowerShell inside `D:\GENERAL AI\Trans_Sys` (File Explorer address bar trick from Section 2).
+1. Open a PowerShell inside `D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS` (File Explorer address bar trick from Section 2).
 2. Run these two lines:
 
 ```powershell
-cd "D:\GENERAL AI\Trans_Sys\backend"
+cd "D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS\backend"
 .\venv\Scripts\Activate.ps1
 ```
 
-3. You should see `(.venv)` at the start of the line. Then start the brain:
+3. You should see `(.venv)` at the start of the line:
 
 ```powershell
 python -m uvicorn bayaan_server.api.app:create_app --factory --reload --host 127.0.0.1 --port 8000
 ```
 
 4. What success looks like: lines saying `Uvicorn running on http://127.0.0.1:8000`, plus `startup complete`.
-5. **Leave this window open.** Minimizing is fine. Closing = brain turns off.
+5. **Leave this window open.** Minimizing is fine. Closing = backend turns off.
 
-> If the port is busy (`Address already in use`): an old brain is still running. Close the other blue window, or restart your PC, then try again.
+> If the port is busy (`Address already in use`): an old process is still running. Close the other blue window, or restart your PC, then try again.
 
 ### Window B — Start the website
 
@@ -213,7 +213,7 @@ python -m uvicorn bayaan_server.api.app:create_app --factory --reload --host 127
 2. Run:
 
 ```powershell
-cd "D:\GENERAL AI\Trans_Sys\frontend"
+cd "D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS\frontend"
 npm run dev
 ```
 
@@ -226,7 +226,7 @@ Open Chrome/Edge and visit these addresses (type into the address bar, press Ent
 
 | Address | What you should see | Meaning |
 |---|---|---|
-| `http://127.0.0.1:8000/health` | `{"status":"ok","database":"ok",...}` | ✅ Brain is alive. (This public address shows only liveness — `status`, `version`, `environment`, `database`. It deliberately does NOT expose provider internals to the public.) |
+| `http://127.0.0.1:8000/health` | `{"status":"ok","database":"ok",...}` | ✅ backend is alive. (This public address shows only liveness — `status`, `version`, `environment`, `database`. It deliberately does NOT expose provider internals to the public.) |
 | `http://localhost:5173/` | The **login page** ("Operator sign in") | ✅ Website is alive and asks you to log in the first time |
 | After logging in: `http://localhost:5173/` again | The **Mosque Operations Cockpit** (dashboard) | ✅ You are signed in |
 
@@ -240,7 +240,7 @@ If those load, BAYAAN is running. 🎉
 
 ### How to STOP everything at the end of the day
 
-1. Click into Window A, press **Ctrl + C** (this stops the brain), then type `exit`.
+1. Click into Window A, press **Ctrl + C** (this stops the backend), then type `exit`.
 2. Click into Window B, press **Ctrl + C**, then type `exit`.
 3. Done. Your data (sermons, rooms, sessions) is saved in `backend/bayaan_dev.db` and will be there tomorrow.
 
@@ -252,7 +252,7 @@ The **Bayaan Control Panel** is a small window that opens in your browser. From 
 
 **Step 1 — Open the panel**
 
-1. Open **File Explorer** and go to your BAYAAN folder (e.g. `D:\GENERAL AI\Trans_Sys`).
+1. Open **File Explorer** and go to your BAYAAN folder (e.g. `D:\BAYAAN-Real-time-khutbah-transaltion-STT-TTS`).
 2. Double-click **`Start Bayaan.bat`**.
 3. A black window appears for a moment, then your browser opens the **Control Panel** at `http://127.0.0.1:8765/`.
    - Keep that black window open while you use BAYAAN.
@@ -287,7 +287,7 @@ The **Bayaan Control Panel** is a small window that opens in your browser. From 
 
 ## 4. Your first 15 minutes with BAYAAN — the full tour (follow in order)
 
-Do this with the brain (Window A) and website (Window B) **both running**.
+Do this with the backend (Window A) and website (Window B) **both running**.
 
 ### Tour stop 1 — Log in and open the pages (1 minute)
 
@@ -541,7 +541,7 @@ The one-page cockpit has four tabs. A quick map:
 | Approve all drafts | Approve every draft on this version at once (§96). |
 | Generate drafts | "Write first translations for all pieces." Safe to click again — it only fills gaps, never duplicates. |
 | DRAFT → REVIEW → APPROVED → PUBLISHED | The life stages. Only PUBLISHED pieces are used live. PUBLISHED = frozen forever. |
-| Refresh | Re-read from the brain. Click it if the screen looks stale. |
+| Refresh | Re-read from the backend. Click it if the screen looks stale. |
 
 **Room page (`/r/YOUR_CODE`) — the worshipper's phone:**
 
@@ -613,8 +613,8 @@ Still stuck? Copy the **last 20 lines** of the red text in the blue window and s
 **Friday — 30 minutes before:**
 
 - [ ] Operator PC on, plugged into power (not battery).
-- [ ] Window A (brain) started — `/health` says `ok` and `database: ok`.
-- [ ] Window B (website) started — sign in at `http://localhost:5173/` and confirm the cockpit loads.
+- [ ] Window A (backend) started — `/health` says `ok` and `database: ok`.
+- [ ] Window B (frontend) started — sign in at `http://localhost:5173/` and confirm the cockpit loads.
 - [ ] **Diagnostics** tab looks normal (preflight-style checks green; login confirmed).
 - [ ] Session status → READY, then → **LIVE** when the imam starts.
 - [ ] QR visible. One volunteer confirms captions appear on their phone.
@@ -624,7 +624,7 @@ Still stuck? Copy the **last 20 lines** of the red text in the blue window and s
 
 - [ ] Watch the room page, not the code windows.
 - [ ] If captions show fallback (gray) — normal protection, do nothing.
-- [ ] If phones show `connecting` — check Wi-Fi, don't restart the brain mid-sermon unless told to.
+- [ ] If phones show `connecting` — check Wi-Fi, don't restart the backend mid-sermon unless told to.
 
 **After:**
 
