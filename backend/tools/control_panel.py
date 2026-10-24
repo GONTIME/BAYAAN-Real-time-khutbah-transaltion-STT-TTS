@@ -186,6 +186,11 @@ def is_secret_key(env_key: str) -> bool:
         return True
     if "TOKEN_SECRET" in upper:
         return True
+    # A bare *_TOKEN is a credential too (e.g. the Telegram bot token, ADR-0016);
+    # it must be shown as "set/empty" in the panel, never echoed. TTL-style keys
+    # end in _TTL_HOURS / _TTL_MINUTES and stay visible.
+    if upper.endswith("_TOKEN"):
+        return True
     return False
 
 
@@ -203,6 +208,24 @@ def serialize_value(kind: str, raw) -> str:
     return str(raw)
 
 
+TARGET_LANGUAGES_KEY = "BAYAAN_LANGUAGES__TARGET_LANGUAGES"
+
+
+def language_picker_choices() -> list[dict[str, str]]:
+    """Curated target languages for the picker (ADR-0017).
+
+    Imported lazily so this module keeps working without the backend package on
+    the path (the panel is stdlib-only by design).
+    """
+    from bayaan_server.domain.languages import LANGUAGE_CATALOG
+
+    return [
+        {"code": entry.code, "label": entry.endonym, "english": entry.english}
+        for entry in LANGUAGE_CATALOG
+        if entry.code != "ar"  # the source language is never a target (§63)
+    ]
+
+
 def build_options() -> list[dict]:
     """Enumerate every config option with default + description + type."""
     options = []
@@ -211,6 +234,18 @@ def build_options() -> list[dict]:
         kind, choices = _option_type(field)
         env_key = meta["env_key"]
         default = _option_default(field)
+        description = OPTION_DESCRIPTIONS.get(env_key, "")
+        if env_key == TARGET_LANGUAGES_KEY:
+            # ADR-0017: the admin picks from the curated catalog, so the panel
+            # renders a checkbox list (never free-typed codes) and the
+            # description spells out what is supported.
+            choices = language_picker_choices()
+            description = (
+                "Languages to translate into. Tick them below - the list is the "
+                "curated catalog the server supports: "
+                + ", ".join(c["code"] for c in choices)
+                + ". A room can be narrowed further when starting it."
+            )
         options.append(
             {
                 "key": env_key,
@@ -220,7 +255,7 @@ def build_options() -> list[dict]:
                 "choices": choices,
                 "secret": is_secret_key(env_key),
                 "default": serialize_value(kind, default),
-                "description": OPTION_DESCRIPTIONS.get(env_key, ""),
+                "description": description,
             }
         )
     return options
@@ -350,6 +385,21 @@ OPTION_DESCRIPTIONS: dict[str, str] = {
     "BAYAAN_ALERTS__ENABLED": "Master switch for operator alerts.",
     "BAYAAN_ALERTS__MIN_SEVERITY": "Lowest severity that triggers an alert: info | warning | error.",
     "BAYAAN_ALERTS__WEBHOOK_URL": "URL to receive alert webhooks (empty = log-only).",
+    # Telegram caption mirror (ADR-0016)
+    "BAYAAN_TELEGRAM__ENABLED": "Mirror every caption line (source + translations) to a Telegram bot/channel.",
+    "BAYAAN_TELEGRAM__BOT_TOKEN": "Secret bot token from @BotFather. Never displayed or logged.",
+    "BAYAAN_TELEGRAM__CHAT_ID": "Target chat: @channelname, -100... channel id, or a numeric chat id.",
+    "BAYAAN_TELEGRAM__SEND_CAPTIONS": "Mirror live caption lines (the mirror's only scope).",
+    "BAYAAN_TELEGRAM__QUEUE_MAXSIZE": "Bounded queue size; overflow drops the OLDEST line.",
+    "BAYAAN_TELEGRAM__MIN_INTERVAL_MS": "Minimum millis between two sends (0 = every line).",
+    "BAYAAN_TELEGRAM__TIMEOUT_SECONDS": "Per-request timeout for one Telegram send.",
+    "BAYAAN_TELEGRAM__MAX_ATTEMPTS": "Bounded send attempts before a line is reported as failed.",
+    "BAYAAN_TELEGRAM__DISABLE_NOTIFICATION": "Post silently (no notification ping in the channel).",
+    "BAYAAN_TELEGRAM__INCLUDE_SOURCE": "Include the spoken source-language line in each message.",
+    "BAYAAN_TELEGRAM__INCLUDE_ROOM_CODE": "Add a header line with the room code and line number.",
+    "BAYAAN_TELEGRAM__SKIP_UNAVAILABLE": "Hide languages whose translation was blocked/unavailable.",
+    "BAYAAN_TELEGRAM__API_BASE_URL": "Telegram API base URL (change only for a local mock).",
+    "BAYAAN_TELEGRAM__PARSE_MODE": "Empty = plain text (safest); HTML or MarkdownV2 escape the text.",
     # Alignment
     "BAYAAN_ALIGNMENT__ENABLED": "Enable the alignment engine (Phase 4).",
     "BAYAAN_ALIGNMENT__WINDOW_SIZE": "Local window radius for alignment candidates.",
@@ -499,6 +549,29 @@ def _atomic_write(path: Path, text: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validated_list(opt: dict, items: list) -> tuple[bool, str, str | None]:
+    """Final check for ``list`` values; the language list is curated (ADR-0017).
+
+    The server refuses an unknown language or an empty target set at startup, so
+    the panel refuses to write one in the first place (§184: fail where the
+    operator can still fix it).
+    """
+    if opt.get("key") != TARGET_LANGUAGES_KEY:
+        return True, json.dumps(items, ensure_ascii=False), None
+    allowed = {choice["code"] for choice in language_picker_choices()}
+    unknown = [item for item in items if item not in allowed]
+    if unknown:
+        return (
+            False,
+            "",
+            f"Unsupported language(s): {', '.join(map(str, unknown))}. "
+            f"Choose from: {', '.join(sorted(allowed))}.",
+        )
+    if not items:
+        return False, "", "Pick at least one language."
+    return True, json.dumps(items, ensure_ascii=False), None
+
+
 def validate_value(opt: dict, raw) -> tuple[bool, str, str | None]:
     """Validate input against the option. Returns (ok, value_to_save, error)."""
     kind = opt["kind"]
@@ -534,11 +607,11 @@ def validate_value(opt: dict, raw) -> tuple[bool, str, str | None]:
             if "," in value:
                 items = [item.strip() for item in value.split(",") if item.strip()]
                 if items and all(isinstance(i, str) for i in items):
-                    return True, json.dumps(items, ensure_ascii=False), None
+                    return _validated_list(opt, items)
             return False, "", "Enter a JSON list, e.g. [\"it\",\"en\"]."
         if not isinstance(parsed, list):
             return False, "", "Enter a JSON list, e.g. [\"it\",\"en\"]."
-        return True, json.dumps(parsed, ensure_ascii=False), None
+        return _validated_list(opt, parsed)
     return True, str(value), None
 # ---------------------------------------------------------------------------
 # LAN / reachability state (persisted next to .env, never committed)
@@ -1138,6 +1211,12 @@ input:focus + .slider{box-shadow:0 0 0 3px var(--accent-ring)}
 }
 .opt-input:focus{outline:none;border-color:var(--primary-strong)}
 .check-label{display:flex;gap:8px;align-items:center;cursor:pointer;font-size:13px;gap:10px}
+.lang-picker{display:flex;flex-wrap:wrap;gap:6px}
+.lang-chip{
+  display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:999px;
+  border:1px solid var(--border-strong); background:var(--surface-2); cursor:pointer; font-size:12px;
+}
+.lang-chip.on{border-color:var(--primary-strong); background:var(--primary-soft); font-weight:600}
 
 .savebar{
   position:sticky; bottom:14px; display:flex; gap:10px; align-items:center;
@@ -1370,23 +1449,56 @@ function renderOptions() {
   }
   el("options").innerHTML = html || '<p class="sub">No settings match your search.</p>';
   updateSavebar();
+  // Re-bind after every render: the rows are recreated on each change, so a
+  // listener attached only once (at load) would stop working after the first
+  // edit.
+  document.querySelectorAll("[data-key]").forEach((node) => {
+    const opt = options.find((o) => o.key === node.dataset.key);
+    if (opt) bindRow(opt);
+  });
+}
+
+function parseListValue(raw) {
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch (_e) {
+    return [];
+  }
 }
 
 function optRow(opt) {
   const dirty = edited[opt.key] !== undefined;
+  // A pending edit wins over the server value: re-rendering (search box, save,
+  // discard) must never silently drop what the operator just typed.
+  const pending = dirty ? edited[opt.key] : opt.value;
   const desc = opt.description ? `<div class="opt-desc">${esc(opt.description)}</div>` : "";
   let control = "";
   const key = `data-key="${esc(opt.key)}"`;
   if (opt.kind === "bool") {
-    const checked = opt.value === "true" || opt.value === "1";
+    const checked = pending === "true" || pending === "1";
     control = `<label class="check-label">
       <span class="switch"><input type="checkbox" ${key} ${checked ? "checked" : ""}><span class="slider"></span></span>
       ${checked ? "Enabled" : "Disabled"}</label>`;
   } else if (opt.kind === "select") {
     control = `<select ${key} class="opt-input">${opt.choices.map(c =>
-      `<option value="${esc(c)}" ${String(opt.value) === String(c) ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+      `<option value="${esc(c)}" ${String(pending) === String(c) ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+  } else if (opt.kind === "list" && Array.isArray(opt.choices) && opt.choices.length) {
+    // ADR-0017: curated pick-list (languages) - tick, never type. The hidden
+    // input keeps the JSON value the rest of the panel already reads/writes.
+    const selected = parseListValue(pending);
+    const chips = opt.choices.map(c => {
+      const on = selected.includes(c.code);
+      return `<label class="lang-chip ${on ? "on" : ""}" title="${esc(c.english)}">
+        <input type="checkbox" class="lang-chip-box" data-code="${esc(c.code)}" ${on ? "checked" : ""}>
+        ${esc(c.label)} <span class="sub">(${esc(c.code)})</span></label>`;
+    }).join("");
+    control = `<div class="lang-picker">${chips}</div>
+      <input type="hidden" ${key} value="${esc(JSON.stringify(selected))}">`;
+  } else if (opt.secret) {
+    control = `<input type="password" ${key} class="opt-input" value="" placeholder="${dirty ? "new value set — type to replace" : (opt.source === "env" ? "•••••• set — type to replace" : "empty (default)")}">`;
   } else {
-    control = `<input type="${opt.secret ? "password" : "text"}" ${key} class="opt-input" value="${opt.secret ? "" : esc(opt.value)}" placeholder="${opt.secret ? (opt.source === "env" ? "•••••• set — type to replace" : "empty (default)") : esc(opt.default)}">`;
+    control = `<input type="text" ${key} class="opt-input" value="${esc(pending)}" placeholder="${esc(opt.default)}">`;
   }
   return `<div class="opt-row ${dirty ? "dirty" : ""}">
     <div><div class="opt-key">${esc(opt.key)}</div>${desc}</div>
@@ -1394,32 +1506,62 @@ function optRow(opt) {
   </div>`;
 }
 
+function applyEdit(opt, v) {
+  if (opt.secret) {
+    if (v) edited[opt.key] = v; else delete edited[opt.key];
+  } else if (v === opt.value) {
+    delete edited[opt.key];
+  } else {
+    edited[opt.key] = v;
+  }
+}
+
+function syncRow(opt) {
+  // Update only what changed: the dirty highlight and the save bar. Re-rendering
+  // the whole list here would destroy the focused input after every keystroke,
+  // which made the panel feel like it "could not change" a setting.
+  const node = document.querySelector(`[data-key="${CSS.escape(opt.key)}"]`);
+  const row = node ? node.closest(".opt-row") : null;
+  if (row) row.classList.toggle("dirty", edited[opt.key] !== undefined);
+  updateSavebar();
+}
+
 function bindRow(opt) {
   const node = document.querySelector(`[data-key="${CSS.escape(opt.key)}"]`);
   if (!node) return;
   const read = () => (opt.kind === "bool" ? (node.checked ? "true" : "false") : node.value);
   node.addEventListener("input", () => {
-    const v = read();
-    if (opt.secret) {
-      if (v) edited[opt.key] = v; else delete edited[opt.key];
-    } else if (v === opt.value) {
-      delete edited[opt.key];
-    } else {
-      edited[opt.key] = v;
-    }
-    renderOptions();
+    applyEdit(opt, read());
+    syncRow(opt);
   });
   node.addEventListener("change", () => {
-    const v = read();
-    if (opt.secret) {
-      if (v) edited[opt.key] = v; else delete edited[opt.key];
-    } else if (v === opt.value) {
-      delete edited[opt.key];
-    } else {
-      edited[opt.key] = v;
-    }
-    renderOptions();
+    applyEdit(opt, read());
+    syncRow(opt);
   });
+  // ADR-0017 curated list picker: each chip writes the hidden JSON input, so
+  // the saved value stays a normal JSON list the server already validates.
+  const picker = node.parentElement;
+  if (picker) {
+    picker.querySelectorAll(".lang-chip-box").forEach((box) => {
+      box.addEventListener("change", () => {
+        // Catalog order (DOM order), not click order: the configured order is
+        // what worshippers see on the room page.
+        const codes = Array.from(picker.querySelectorAll(".lang-chip-box"))
+          .filter((b) => b.checked)
+          .map((b) => b.dataset.code);
+        // Keep the hidden JSON input in sync with what we save, so the DOM and
+        // `edited` can never disagree.
+        node.value = JSON.stringify(codes);
+        applyEdit(opt, JSON.stringify(codes));
+        // Toggle the chips in place - never re-render while the operator works.
+        picker.querySelectorAll(".lang-chip").forEach((chip) => {
+          const inner = chip.querySelector(".lang-chip-box");
+          chip.classList.toggle("on", Boolean(inner && inner.checked));
+        });
+        syncRow(opt);
+      });
+    });
+  }
 }
 
 function updateSavebar() {
@@ -1443,11 +1585,8 @@ async function loadOptions() {
   try {
     const data = await api("/api/options");
     options = data.options;
+    // renderOptions() binds every row it renders.
     renderOptions();
-    document.querySelectorAll("[data-key]").forEach((node) => {
-      const opt = options.find((o) => o.key === node.dataset.key);
-      if (opt) bindRow(opt);
-    });
   } catch (e) {
     el("options").innerHTML = '<p class="notice err show">Could not load settings: ' + esc(e.message) + '</p>';
   }

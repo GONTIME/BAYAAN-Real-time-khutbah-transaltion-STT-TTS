@@ -113,6 +113,14 @@ export type SystemSummary = {
   degraded_reason: string | null;
   active_sessions_count: number;
   providers: Record<string, Array<{ provider: string; state: string }>>;
+  // ADR-0017: every language picker in the operator UI is driven by this -
+  // `targets` is what the server is configured for, `catalog` is the curated
+  // list the admin can enable in the Control Panel.
+  languages?: {
+    source: string;
+    targets: Array<{ code: string; label: string }>;
+    catalog: Array<{ code: string; label: string; english: string }>;
+  };
   config: {
     asr_provider: string;
     translation_provider: string;
@@ -122,6 +130,29 @@ export type SystemSummary = {
     audio_capture_enabled: boolean;
     audio_capture_mode: string;
     audio_input_device: string;
+    // ADR-0015: false = the PC camera relay is off on the server (hide the card).
+    camera_enabled?: boolean;
+  };
+};
+
+export type CameraReady = {
+  ready: boolean;
+  /** The camera WS close code this verdict corresponds to (4432/4404/4409). */
+  code: number | null;
+  reason: string;
+};
+
+export type SafetyBlockEntry = {
+  id: string;
+  action: string;
+  target_id: string | null;
+  timestamp: string | null;
+  metadata: {
+    sequence?: number;
+    lang?: string;
+    reason?: string;
+    capability?: string;
+    raw?: string;
   };
 };
 
@@ -315,9 +346,22 @@ export const api = {
     authFetch(`/api/v1/sessions/${sessionId}/segments`).then((r) =>
       j<LiveSegmentItem[]>(r)
     ),
+  // ADR-0015: pre-flight for the PC camera relay - answers "will the camera WS
+  // accept right now, and if not why" BEFORE getUserMedia switches the webcam
+  // on (a rejected relay used to look like "camera starts then closes").
+  cameraReady: (sessionId: string) =>
+    authFetch(`/api/v1/sessions/${sessionId}/camera/ready`).then((r) =>
+      j<CameraReady>(r)
+    ),
   systemSummary: () =>
     authFetch("/api/v1/diagnostics/system-summary").then((r) =>
       j<SystemSummary>(r)
+    ),
+  // ADR-0017: operator-only explanation of WHY a line was held back (§98/§168).
+  // The room itself only ever sees the §134 fallback message.
+  safetyBlocks: (limit = 20) =>
+    authFetch(`/api/v1/diagnostics/safety-blocks?limit=${limit}`).then((r) =>
+      j<{ blocks: SafetyBlockEntry[]; count: number }>(r)
     ),
   testTranslation: (text: string, target_language: string) =>
     authFetch("/api/v1/diagnostics/test-translation", {

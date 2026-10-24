@@ -15,6 +15,7 @@ from bayaan_server.config import Settings, get_settings
 from bayaan_server.db.engine import create_engine, create_session_factory, init_db
 from bayaan_server.logging_setup import configure_logging, get_logger
 from bayaan_server.metrics import MetricsRegistry
+from bayaan_server.notify.telegram import TelegramNotifier
 from bayaan_server.ops.alerts import AlertBus
 from bayaan_server.ops.health import ServiceHealth
 from bayaan_server.ops.watchdog import WatchdogService
@@ -60,6 +61,10 @@ class ServiceState:
         self.health = ServiceHealth(settings, self.alerts, self.metrics)
         self.rate_limiter = RateLimiter(settings.rate_limit)
         self.broker = RoomBroker(settings, self.metrics)
+        # ADR-0016: Telegram caption mirror. Inert unless telegram.enabled is set
+        # with both a bot token and a chat id, so the default deployment is
+        # unaffected (§184: no silent assumptions).
+        self.notifier = TelegramNotifier(settings, self.metrics)
         # ADR-0015: latest-frame relay for the PC camera feeds. Inert unless
         # camera.capture_enabled (the camera WS closes 4432 and the MJPEG route
         # 404s), so the default deployment is unaffected.
@@ -79,7 +84,7 @@ class ServiceState:
         )
         self.ingest_service = LiveIngestService(
             settings, asr, translation, self.metrics, self.tts_service,
-            health=self.health, alerts=self.alerts,
+            health=self.health, alerts=self.alerts, notifier=self.notifier,
         )
         self.ingest_service.set_broker(self.broker)
         # ADR-0014: PC audio input. Inert unless audio.capture_enabled and
@@ -107,6 +112,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state.watchdog.start()
         # §194: start the TTS worker only when TTS is enabled (§201 text-first).
         state.tts_service.start()
+        # ADR-0016: start the mirror worker only when Telegram is configured.
+        state.notifier.start()
         logger.info(
             "startup complete",
             extra={
@@ -119,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         yield
         await state.tts_service.stop()
+        await state.notifier.stop()
         await state.capture_service.stop_all()
         await state.watchdog.stop()
         await state.engine.dispose()

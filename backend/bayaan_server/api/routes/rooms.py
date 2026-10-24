@@ -21,6 +21,7 @@ from bayaan_server.db.repository import (
     RoomRepository,
 )
 from bayaan_server.domain.enums import AuditAction, SessionStatus
+from bayaan_server.domain.languages import supported_codes_csv
 from bayaan_server.domain.models import LiveSession
 from bayaan_server.security import visitor_tokens
 from bayaan_server.utils.ratelimit import RateLimiter
@@ -138,9 +139,16 @@ async def start_room(payload: StartRoomRequest, request: Request, _=Depends(veri
     languages = payload.active_languages or list(targets)
     unknown = [lang for lang in languages if lang not in targets]
     if unknown:
+        # ADR-0017: the admin picks from a list, so a rejected code must say
+        # which codes ARE available - both what this server is configured for
+        # and the full curated catalog (§184: no silent assumptions).
         raise HTTPException(
             status_code=422,
-            detail=f"unknown target language(s): {', '.join(unknown)}",
+            detail=(
+                f"unknown target language(s): {', '.join(unknown)}. "
+                f"Configured targets: {', '.join(targets)}. "
+                f"Supported languages: {supported_codes_csv()}"
+            ),
         )
     async with state.session_factory() as db:
         session_repo = LiveSessionRepository(db)
@@ -190,6 +198,10 @@ async def discover_room(code: str, request: Request) -> RoomDiscoveryResponse:
         video_feed_url: str | None = None
         video_feed_kind: str | None = None
         video_feed_mobile: bool = False
+        # ADR-0017: a room reports ITS OWN languages when it has a session, so a
+        # per-room selection is visible to the discovery endpoint too; without a
+        # session the configured defaults are the honest answer (§0 rule 8).
+        languages = state.settings.languages.target_languages
         if room.session_id is not None:
             session = await LiveSessionRepository(db).get(room.session_id)
             if session:
@@ -197,12 +209,14 @@ async def discover_room(code: str, request: Request) -> RoomDiscoveryResponse:
                 video_feed_url = session.video_feed_url
                 video_feed_kind = session.video_feed_kind
                 video_feed_mobile = session.video_feed_mobile
+                if session.active_languages:
+                    languages = session.active_languages
     return RoomDiscoveryResponse(
         room_code=room.code,
         room_id=room.id,
         session_id=room.session_id,
         session_status=session_status,
-        languages=state.settings.languages.target_languages,
+        languages=languages,
         visitor_token=visitor_tokens.issue(state.settings.security),
         video_feed_url=video_feed_url,
         video_feed_kind=video_feed_kind,

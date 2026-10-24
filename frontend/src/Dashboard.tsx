@@ -4,6 +4,7 @@ import {
   Draft,
   GlossaryTerm,
   RoomStart,
+  SafetyBlockEntry,
   ScriptureVerse,
   Sermon,
   SermonSegment,
@@ -14,6 +15,7 @@ import {
 } from "./adminApi";
 import { LiveArabicRecognizer, MicCapture } from "./capture";
 import { CameraRelayClient } from "./camera";
+import { languageLabel } from "./languages";
 import { VUMeter } from "./components/audio/VUMeter";
 import { buildSrt, captionsToCues, downloadSrtFile } from "./srt";
 import { logoutOperator, getStoredUsername, getStoredToken } from "./auth";
@@ -109,9 +111,35 @@ export default function Dashboard() {
 
   // Diagnostics Playground state
   const [playText, setPlayText] = useState("إن الله مع الصابرين");
-  const [playLang, setPlayLang] = useState<"it" | "en">("it");
+  // ADR-0017: the target is one of the CONFIGURED languages, not a hard-coded
+  // it/en pair ("" = "use the first configured target").
+  const [playLang, setPlayLang] = useState<string>("");
   const [playResult, setPlayResult] = useState<TestTranslationResult | null>(null);
   const [playBusy, setPlayBusy] = useState(false);
+  // ADR-0017: operator-only view of WHY lines were held back (§98/§168). The
+  // room keeps seeing just the §134 fallback - this is the explainable side.
+  const [safetyBlocks, setSafetyBlocks] = useState<SafetyBlockEntry[]>([]);
+
+  // ADR-0017: languages this server is configured for, straight from the
+  // backend catalog. The fallback keeps the UI usable for the split second
+  // before the first summary arrives (and on an older backend).
+  const configuredTargets = summary?.languages?.targets ?? [];
+  const targetCodes = configuredTargets.length
+    ? configuredTargets.map((t) => t.code)
+    : ["it", "en"];
+  // Per-room selection (§63): null = "all configured targets" (the default).
+  const [roomLangs, setRoomLangs] = useState<string[] | null>(null);
+  const effectiveRoomLangs = roomLangs ?? targetCodes;
+  const effectivePlayLang = playLang || targetCodes[0];
+  // ADR-0015: the PC camera relay only accepts a LIVE session - the UI mirrors
+  // that rule so the webcam never switches on for a relay that will be refused.
+  const sessionIsLive = (room?.status || activeSession?.status) === "LIVE";
+  // Catalog entries the admin has NOT enabled yet - shown as a hint so the
+  // picker is a real list, not a code the operator has to remember.
+  const notConfiguredCodes = (summary?.languages?.catalog ?? [])
+    .filter((entry) => entry.code !== (summary?.languages?.source ?? "ar"))
+    .filter((entry) => !targetCodes.includes(entry.code))
+    .map((entry) => entry.code);
 
   // Scripture & Glossary state
   const [scriptureList, setScriptureList] = useState<ScriptureVerse[]>([]);
@@ -196,12 +224,36 @@ export default function Dashboard() {
     };
   }, [room?.code]);
 
+  // ADR-0017: load the operator-facing safety explanations when the Diagnostics
+  // tab is opened (and on demand from the card's Refresh button).
+  const loadSafetyBlocks = useCallback(async () => {
+    try {
+      const res = await api.safetyBlocks(20);
+      setSafetyBlocks(res.blocks);
+    } catch {
+      // Diagnostics must never break the cockpit; the card simply stays empty.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "diagnostics") {
+      void loadSafetyBlocks();
+    }
+  }, [tab, loadSafetyBlocks]);
+
   // --- LIVE ROOM CONTROL ---
   const handleStartRoom = async () => {
     setBusy(true);
     setError(null);
     try {
-      const started = await api.startRoom(["it", "en"]);
+      // ADR-0017: start the room with the languages the operator ticked (which
+      // default to everything this server is configured for) - never a
+      // hard-coded pair that a differently-configured server would reject.
+      if (effectiveRoomLangs.length === 0) {
+        setError("Pick at least one language for this room.");
+        return;
+      }
+      const started = await api.startRoom(effectiveRoomLangs);
       setRoom(started);
       flash(`Room ${started.code} created in READY state. Share QR code, then click "Go LIVE".`);
       await refreshSummary();
@@ -249,7 +301,12 @@ export default function Dashboard() {
       time: item.createdAt,
     }));
 
-    const languagesToExport = ["ar", "it", "en"];
+    // ADR-0017: export every language this room actually broadcasts (source +
+    // configured targets), instead of a hard-coded ar/it/en triple.
+    const languagesToExport = [
+      summary?.languages?.source ?? "ar",
+      ...(room?.languages ?? targetCodes),
+    ];
     let count = 0;
     for (const lang of languagesToExport) {
       const cues = captionsToCues(cueInput, lang, sessionStartTimeRef.current);
@@ -260,6 +317,27 @@ export default function Dashboard() {
       }
     }
     flash(`Exported ${count} SRT broadcast subtitle files.`);
+  };
+
+  /**
+   * Clear every piece of state tied to a closed room, so the cockpit returns to
+   * IDLE and a new room can be started immediately.
+   *
+   * Without this the room object stayed in state with status ENDED: the header
+   * gates "Start New Live Room" on `!room && !activeSession`, "Go LIVE" on
+   * READY/CREATED and "End Broadcast" on LIVE - so an ENDED room matched none of
+   * them and the operator had NO button at all until a page reload.
+   */
+  const resetRoomState = () => {
+    setRoom(null);
+    setActiveSession(null);
+    setLiveFeed([]);
+    setRoomLangs(null);
+    setVideoFeedUrl("");
+    setVideoFeedKind("hls");
+    setVideoFeedMobile(false);
+    setSpeechText("");
+    sessionStartTimeRef.current = Date.now();
   };
 
   const handleEndSession = async (sessionId?: string) => {
@@ -279,11 +357,14 @@ export default function Dashboard() {
       if (cameraActive) {
         handleStopCamera();
       }
+      const closedCode = room?.session_id === sid ? room.code : null;
       await api.setSessionStatus(sid, "ENDED");
-      if (room && room.session_id === sid) {
-        setRoom({ ...room, status: "ENDED" });
-      }
-      flash("Session ended successfully.");
+      // The room is finished: drop its state (the operator socket closes with
+      // the room effect's cleanup) so the cockpit offers a fresh room at once.
+      resetRoomState();
+      flash(
+        `Room ${closedCode ? `${closedCode} ` : ""}closed. You can start a new room now.`
+      );
       await refreshSummary();
     } catch (e) {
       setError(String(e));
@@ -322,10 +403,18 @@ export default function Dashboard() {
         setError("Operator session expired — log in again.");
         return;
       }
-      cameraRef.current?.setOnClose(() => {
+      // ADR-0015 pre-flight: ask the server BEFORE getUserMedia switches the
+      // webcam on. Without this the relay rejects a non-LIVE session after the
+      // webcam is already on, which looked like "camera starts then closes".
+      const ready = await api.cameraReady(sid);
+      if (!ready.ready) {
+        setError(`Camera not started: ${ready.reason}`);
+        return;
+      }
+      cameraRef.current?.setOnClose((_code, reason) => {
         setCameraActive(false);
         setCameraPreview(null);
-        flash("Camera stream ended.");
+        flash(reason || "Camera stream ended.");
       });
       await cameraRef.current?.start(sid, token);
       setCameraActive(true);
@@ -596,7 +685,7 @@ export default function Dashboard() {
     if (!playText.trim()) return;
     setPlayBusy(true);
     try {
-      const res = await api.testTranslation(playText.trim(), playLang);
+      const res = await api.testTranslation(playText.trim(), effectivePlayLang);
       setPlayResult(res);
     } catch (e) {
       setError(String(e));
@@ -802,6 +891,38 @@ export default function Dashboard() {
               )}
             </div>
 
+            {!room && !activeSession && (
+              <div className="play-lang-select room-lang-pick">
+                <span className="label">Languages for this room:</span>
+                {targetCodes.map((code) => {
+                  const on = effectiveRoomLangs.includes(code);
+                  return (
+                    <button
+                      key={code}
+                      className={`btn-sm ${on ? "active" : ""}`}
+                      aria-pressed={on}
+                      title={`${languageLabel(code)} (${code})`}
+                      onClick={() =>
+                        setRoomLangs(
+                          on
+                            ? effectiveRoomLangs.filter((c) => c !== code)
+                            : [...effectiveRoomLangs, code]
+                        )
+                      }
+                    >
+                      {languageLabel(code)} ({code})
+                    </button>
+                  );
+                })}
+                {notConfiguredCodes.length > 0 && (
+                  <span className="small muted">
+                    More languages available in the Control Panel → Languages:{" "}
+                    {notConfiguredCodes.join(", ")}
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="cockpit-buttons">
               {!room && !activeSession ? (
                 <button
@@ -919,7 +1040,9 @@ export default function Dashboard() {
                 )}
               </div>
 
-              {/* PC Camera Capture Card (ADR-0015) */}
+              {/* PC Camera Capture Card (ADR-0015). Hidden entirely when the
+                  server has the relay off, so no dead button is offered. */}
+              {summary?.config.camera_enabled !== false && (
               <div className="card camera-card">
                 <h3>
                   <Icon name="camera" size={18} /> PC Camera (relay)
@@ -942,7 +1065,12 @@ export default function Dashboard() {
                   <button
                     className="btn btn-primary full-width"
                     onClick={handleStartCamera}
-                    disabled={!room?.session_id && !activeSession?.id}
+                    disabled={!sessionIsLive || (!room?.session_id && !activeSession?.id)}
+                    title={
+                      sessionIsLive
+                        ? "Relay this PC's webcam to the projector / phones"
+                        : "The camera can only relay during a live session"
+                    }
                   >
                     <Icon name="camera" size={16} /> Start PC Camera
                   </button>
@@ -954,12 +1082,21 @@ export default function Dashboard() {
                     <Icon name="stop" size={14} /> Stop Camera
                   </button>
                 )}
+                {/* ADR-0015: the relay only accepts a LIVE session, so say so
+                    instead of letting the webcam switch on and back off. */}
+                {!cameraActive && !sessionIsLive ? (
+                  <p className="small muted mt-sm">
+                    The camera relays only during a live session — click{" "}
+                    <strong>Go LIVE</strong> first.
+                  </p>
+                ) : null}
                 <p className="small muted mt-sm">
                   Tip: after saving, choose "PC camera (relay)" as the feed kind
                   on the "Live Video Stream Feed" card so the projector and
                   phones render this stream.
                 </p>
               </div>
+              )}
 
               {/* Video Stream Configuration Card */}
               <div className="card video-config-card">
@@ -1247,18 +1384,15 @@ export default function Dashboard() {
                 <div className="play-row">
                   <div className="play-lang-select">
                     <label className="small muted">Target:</label>
-                    <button
-                      className={`btn-sm ${playLang === "it" ? "active" : ""}`}
-                      onClick={() => setPlayLang("it")}
-                    >
-                      Italiano (it)
-                    </button>
-                    <button
-                      className={`btn-sm ${playLang === "en" ? "active" : ""}`}
-                      onClick={() => setPlayLang("en")}
-                    >
-                      English (en)
-                    </button>
+                    {targetCodes.map((code) => (
+                      <button
+                        key={code}
+                        className={`btn-sm ${effectivePlayLang === code ? "active" : ""}`}
+                        onClick={() => setPlayLang(code)}
+                      >
+                        {languageLabel(code)} ({code})
+                      </button>
+                    ))}
                   </div>
                   <button
                     className="btn btn-primary"
@@ -1288,6 +1422,43 @@ export default function Dashboard() {
                   <div className="result-text">{playResult.text}</div>
                 </div>
               )}
+            </div>
+
+            {/* ADR-0017: WHY lines were held back - operator-only (§98/§168). */}
+            <div className="card">
+              <h3>
+                <Icon name="lock" size={18} /> Safety Holds — why a line was held back
+              </h3>
+              <p className="small muted">
+                Worshippers only ever see the safe fallback text. These are the
+                reasons BAYAAN recorded for holding a line back — visible to you,
+                never to the room (§98/§168). Safety itself is unchanged.
+              </p>
+              {safetyBlocks.length === 0 ? (
+                <p className="small muted">No held-back lines recorded yet.</p>
+              ) : (
+                <div className="circuits-table">
+                  {safetyBlocks.map((block) => (
+                    <div key={block.id} className="circuit-row">
+                      <span className="c-name">
+                        {block.action === "SAFETY_BLOCK" ? "Blocked" : "Audio held"}
+                        {block.metadata.sequence !== undefined
+                          ? ` · line #${block.metadata.sequence}`
+                          : ""}
+                        {block.metadata.lang
+                          ? ` · ${languageLabel(block.metadata.lang)}`
+                          : ""}
+                      </span>
+                      <span className="small muted">
+                        {block.metadata.reason ?? block.metadata.raw ?? ""}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button className="btn-sm mt-sm" onClick={() => void loadSafetyBlocks()}>
+                Refresh
+              </button>
             </div>
 
             {/* Provider Circuit Breakers & Configuration */}

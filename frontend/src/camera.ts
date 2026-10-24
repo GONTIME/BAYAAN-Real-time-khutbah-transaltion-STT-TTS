@@ -19,6 +19,30 @@ export type CameraRelayOptions = {
   quality?: number;
 };
 
+/** Why the relay refused / ended, in operator words (ADR-0015).
+ *
+ * The server closes the camera WebSocket with an explicit code; a browser that
+ * only reports "closed" leaves the operator guessing why the webcam switched on
+ * and straight back off. ``1006`` is the browser's abnormal closure - it is what
+ * a pre-accept rejection (e.g. "session is not LIVE") looks like from the page,
+ * because the HTTP handshake never completed.
+ */
+export const CAMERA_CLOSE_REASONS: Record<number, string> = {
+  1000: "Camera relay closed.",
+  1006:
+    "The server refused the camera relay. Most often the room is not LIVE yet, or the relay is disabled (BAYAAN_CAMERA__CAPTURE_ENABLED).",
+  4401: "Operator session expired — log in again.",
+  4404: "Session not found — create or start a room first.",
+  4409: 'The room must be LIVE before the camera can be relayed — click "Go LIVE" first.',
+  4429: "Too many operator actions just now — wait a minute and try again.",
+  4431: "The server rejected the camera frames — check the camera is available and not in use by another app.",
+  4432: "PC camera relay is disabled on the server (BAYAAN_CAMERA__CAPTURE_ENABLED=false).",
+};
+
+export function cameraCloseReason(code: number): string {
+  return CAMERA_CLOSE_REASONS[code] ?? `Camera relay closed (code ${code}).`;
+}
+
 export class CameraRelayClient {
   private ws: WebSocket | null = null;
   private stream: MediaStream | null = null;
@@ -28,7 +52,7 @@ export class CameraRelayClient {
   private interval = 0;
   private pushing = false;
   private running = false;
-  private onClose: ((code: number) => void) | null = null;
+  private onClose: ((code: number, reason: string) => void) | null = null;
   private readonly opts: Required<CameraRelayOptions>;
 
   constructor(opts: CameraRelayOptions = {}) {
@@ -51,7 +75,7 @@ export class CameraRelayClient {
   }
 
   /** Notify the caller when the server closes the relay (e.g. session ended). */
-  setOnClose(cb: ((code: number) => void) | null): void {
+  setOnClose(cb: ((code: number, reason: string) => void) | null): void {
     this.onClose = cb;
   }
 
@@ -97,13 +121,7 @@ export class CameraRelayClient {
         // an error — without this the await above would hang forever.
         ws.onclose = (ev) => {
           window.clearTimeout(timer);
-          reject(
-            new Error(
-              ev.code === 1000 || ev.code === 1006
-                ? "Camera relay connection closed"
-                : `Camera relay rejected (code ${ev.code})`
-            )
-          );
+          reject(new Error(cameraCloseReason(ev.code)));
         };
       });
     } catch (err) {
@@ -119,7 +137,7 @@ export class CameraRelayClient {
     // From here the close hook is the STREAM's (session ended → notify caller),
     // not the handshake's.
     ws.onclose = (ev) => {
-      if (this.running) this.onClose?.(ev.code);
+      if (this.running) this.onClose?.(ev.code, cameraCloseReason(ev.code));
     };
 
     const video = document.createElement("video");

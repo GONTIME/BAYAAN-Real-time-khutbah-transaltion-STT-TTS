@@ -143,6 +143,47 @@ class AlertsSettings(BaseSettings):
     webhook_url: str = ""
 
 
+class TelegramSettings(BaseSettings):
+    """Telegram caption mirror (ADR-0016; §107 non-blocking, §134 public text).
+
+    When enabled, every finalized caption - the SAME post-gate event the room
+    WebSocket receives - is mirrored to a Telegram bot chat or channel as
+    "source language + text of translated languages". Off by default (§184 no
+    silent assumptions): an empty ``bot_token`` or ``chat_id`` keeps the
+    notifier inert even when ``enabled`` is true.
+
+    The mirror is a reporting channel, never a second publication path. It is
+    fed AFTER the §78 router, §79 validator and §95/§167 safety gate, so it can
+    never show text the room suppressed (§0 rule 5); a blocked target travels
+    as the public fallback message, never as an operator-facing reason.
+    """
+
+    enabled: bool = False
+    bot_token: str = ""          # @BotFather token; a secret - env only
+    # Bot chat, "@channelusername" or "-100..." channel/supergroup id. All three
+    # use the identical sendMessage path, so a bot DM and a channel both work.
+    chat_id: str = ""
+    send_captions: bool = True   # mirror live caption lines (the ADR-0016 scope)
+    # §149 bounded resources: the queue never grows without limit. When full the
+    # OLDEST line is dropped - a live mirror must keep the newest line.
+    queue_maxsize: int = Field(default=32, ge=1)
+    # Minimum spacing between two sends; 0 = every line. Guards Telegram's
+    # per-chat rate limits on a fast-speaking imam.
+    min_interval_ms: int = Field(default=0, ge=0)
+    timeout_seconds: float = Field(default=10.0, gt=0.0, le=120.0)
+    max_attempts: int = Field(default=3, ge=1, le=10)  # bounded retries (§54 spirit)
+    # §0 rule 8: silent by default, so a mirror never rings a channel at 3am.
+    disable_notification: bool = True
+    include_source: bool = True      # the spoken Arabic line
+    include_room_code: bool = True   # header line (one lookup per session)
+    # False mirrors the public fallback text too (honest: same text as the room).
+    skip_unavailable: bool = False
+    api_base_url: str = "https://api.telegram.org"  # overridable for tests
+    # Empty = plain text: Arabic carrying <, & or * can never break rendering.
+    # "HTML"/"MarkdownV2" are opt-in; the notifier escapes the text to match.
+    parse_mode: str = ""
+
+
 class ValidationSettings(BaseSettings):
     """§79/§66-§68/§101/§23 validation thresholds (Phase 4, §185 no magic values).
 
@@ -276,10 +317,52 @@ class RoomSettings(BaseSettings):
 
 
 class LanguageSettings(BaseSettings):
-    """Language configuration (§63: Italian + English targets, Arabic source)."""
+    """Language configuration (§63, ADR-0017).
+
+    ``target_languages`` is chosen from the curated catalog in
+    ``domain.languages`` - the admin picks from that list, and anything outside
+    it is rejected here at startup with the valid codes spelled out, instead of
+    failing later as a mysterious runtime error (§184: no silent assumptions).
+    """
 
     source_language: str = "ar"
     target_languages: list[str] = Field(default_factory=lambda: ["it", "en"])
+
+    @model_validator(mode="after")
+    def _targets_come_from_the_catalog(self) -> "LanguageSettings":
+        from bayaan_server.domain.languages import (
+            LANGUAGE_CODES,
+            SOURCE_LANGUAGE,
+            TARGET_LANGUAGE_CODES,
+            target_codes_csv,
+        )
+
+        # De-duplicate while preserving the configured order: the order is the
+        # order worshippers see on the room page and in the Telegram mirror.
+        deduped = list(dict.fromkeys(self.target_languages))
+        unknown = [code for code in deduped if code not in TARGET_LANGUAGE_CODES]
+        if unknown:
+            raise ValueError(
+                f"unsupported target language(s): {', '.join(unknown)}. "
+                f"Supported targets: {target_codes_csv()}"
+            )
+        if SOURCE_LANGUAGE in deduped:
+            raise ValueError(
+                f"'{SOURCE_LANGUAGE}' is the source language and cannot be a target "
+                f"(§63). Supported targets: {target_codes_csv()}"
+            )
+        if self.source_language not in LANGUAGE_CODES:
+            raise ValueError(
+                f"unsupported source language '{self.source_language}'. "
+                f"Supported languages: {', '.join(sorted(LANGUAGE_CODES))}"
+            )
+        if not deduped:
+            raise ValueError(
+                "target_languages must not be empty - at least one target is "
+                f"required (§63). Supported targets: {target_codes_csv()}"
+            )
+        self.target_languages = deduped
+        return self
 
 
 class AudioSettings(BaseSettings):
@@ -520,6 +603,7 @@ class Settings(BaseSettings):
     tts: TtsSettings = Field(default_factory=TtsSettings)
     failover: FailoverSettings = Field(default_factory=FailoverSettings)
     alerts: AlertsSettings = Field(default_factory=AlertsSettings)
+    telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     alignment: AlignmentSettings = Field(default_factory=AlignmentSettings)
     scripture: ScriptureSettings = Field(default_factory=ScriptureSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)

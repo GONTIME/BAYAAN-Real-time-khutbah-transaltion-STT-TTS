@@ -170,3 +170,40 @@ Fixes:
 Regression tests (`test_camera_relay.py`) pin sub-500 ms wake latency and
 prompt stream teardown with a deliberately slow 2 s poll fallback, proving the
 viewer no longer depends on polling.
+
+### Follow-up: "the camera starts and closes after a second" (2026-10)
+
+Reported by the operator. Verified against a real server: the relay itself is
+correct — the failure is a **UX gap**, not a relay bug.
+
+Reproduction (real WebSocket client, real server):
+
+| State when "Start PC Camera" is pressed | Server behaviour |
+|---|---|
+| session `CREATED` / `READY` | camera WS **rejected before accept** (LIVE gate, 4409) |
+| session `LIVE`, valid JPEG frames | stays open (15 frames / 1.5 s verified) |
+| 3 non-JPEG frames | closes `4431` (as designed) |
+
+So the sequence the operator saw was: `getUserMedia` switches the webcam on
+(~1 s) → the relay refuses the non-LIVE session → the client releases the camera.
+The only message the page could show was *"Camera relay connection closed"*,
+because a rejection before `accept()` surfaces to the browser as close code
+**1006** (abnormal closure) — the real code never reaches the page.
+
+Fixes (honest UI, §0 rule 8):
+
+1. **Pre-flight before touching the webcam** — new
+   `GET /api/v1/sessions/{id}/camera/ready` (operator token) returns
+   `{ready, code, reason}` with the same verdicts the WS enforces (4432 disabled,
+   4404 unknown session, 4409 not LIVE). The dashboard calls it *before*
+   `getUserMedia`, so a refusal never switches the camera on.
+2. **The button mirrors the rule** — "Start PC Camera" is disabled until the
+   session is LIVE, with an explicit "click **Go LIVE** first" hint, and the whole
+   card is hidden when `camera.capture_enabled` is false (published as
+   `config.camera_enabled` on `/diagnostics/system-summary`).
+3. **Codes are translated to operator words** — `CAMERA_CLOSE_REASONS` in
+   `frontend/src/camera.ts` maps 1006/4401/4404/4409/4429/4431/4432 to a
+   sentence, used both for handshake rejections and for mid-stream closes.
+
+The relay's own behaviour (LIVE gate, frame validation, close codes) is
+unchanged; `tests/test_camera_ready.py` (5 tests) pins the new pre-flight.

@@ -58,6 +58,7 @@ def test_secret_flags() -> None:
     assert cp.is_secret_key("BAYAAN_AUTH__PASSWORD")
     assert cp.is_secret_key("BAYAAN_AUTH__OPERATOR_TOKEN_SECRET")
     assert cp.is_secret_key("BAYAAN_SECURITY__VISITOR_TOKEN_SECRET")
+    assert cp.is_secret_key("BAYAAN_TELEGRAM__BOT_TOKEN")
     # Not secrets: plain TTL integers and ordinary connection settings.
     assert not cp.is_secret_key("BAYAAN_AUTH__TOKEN_TTL_HOURS")
     assert not cp.is_secret_key("BAYAAN_SECURITY__VISITOR_TOKEN_TTL_MINUTES")

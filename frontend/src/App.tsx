@@ -8,6 +8,7 @@ import {
 } from "./ws";
 import { AudioPlayer, isSilentAudioEvent } from "./audio";
 import { Icon } from "./components/Icon";
+import { languageLabel } from "./languages";
 import {
   AdaptiveVideo,
   VideoFeedKind,
@@ -329,7 +330,7 @@ export default function RoomPage() {
             className={lang === language ? "lang active" : "lang"}
             onClick={() => switchLanguage(lang)}
           >
-            {lang === "it" ? "Italiano" : lang === "en" ? "English" : lang}
+            {languageLabel(lang)}
           </button>
         ))}
       </section>

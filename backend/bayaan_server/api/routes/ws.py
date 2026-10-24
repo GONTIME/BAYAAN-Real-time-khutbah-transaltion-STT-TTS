@@ -50,7 +50,16 @@ async def room_ws(websocket: WebSocket, code: str, lang: str = "ar", token: str 
         await websocket.close(code=4401)
         return
 
-    allowed = {"ar", *settings.languages.target_languages}
+    # ADR-0017: a room speaks the languages its OWN session was started with
+    # (per-room selection), falling back to the configured defaults when the
+    # session has none - so a phone can never pick a language this room will
+    # not broadcast, and never gets locked out of one it will.
+    room_languages = (
+        session.active_languages
+        if session is not None and session.active_languages
+        else settings.languages.target_languages
+    )
+    allowed = {"ar", *room_languages}
     if lang not in allowed:
         await websocket.close(code=4400)
         return
@@ -70,7 +79,7 @@ async def room_ws(websocket: WebSocket, code: str, lang: str = "ar", token: str 
                 "room_code": room.code,
                 "session_id": str(room.session_id) if room.session_id else None,
                 "status": session.status.value if session else None,
-                "languages": settings.languages.target_languages,
+                "languages": room_languages,
                 # §201: tell the client whether the server will emit spoken
                 # audio at all, so the room page can show "Audio disabled on
                 # the server" instead of a dead toggle (honest UI, §0 rule 8).

@@ -184,11 +184,11 @@ h1, h2, h3, h4 { line-height: 1.25; margin: 0; }
 .btn-icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; border-radius: 8px;
-  border: 1px solid #37403a; background: #0d0e0b; color: #c9d0c6;
+  border: 1px solid #d2d4c8; background: #fff; color: #2c302a;
   cursor: pointer; font-family: inherit; font-size: 13px;
   transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
-.btn-icon:hover:not(:disabled) { border-color: var(--gold, #f2c94c); color: var(--gold, #f2c94c); }
+.btn-icon:hover:not(:disabled) { border-color: var(--primary, #0b3d2e); color: var(--primary, #0b3d2e); }
 .btn-icon:disabled { opacity: 0.5; cursor: not-allowed; }
 .full-width { width: 100%; }
 .btn.full-width { display: flex; }
@@ -300,20 +300,25 @@ h1, h2, h3, h4 { line-height: 1.25; margin: 0; }
 .room-video video, .room-video img {
   display: block; width: 100%; border-radius: 12px;
 }
+/* Projector surface = the worshipper (mobile) page surface. The congregation
+   reads the phones and the wall at the same time, so the wall must not flip to
+   a theme of its own. Colours mirror the room page (body #f4f4ee / text
+   #1c1f19, white cards with #e7e8de borders, brand green #0b3d2e). */
+
 /* ---- 5. Projector screen (/projector/CODE) --------------------------- */
 .projector-screen {
-  min-height: 100vh; background: #0a0c0a; color: #f4f6f1;
+  min-height: 100vh; background: #f4f4ee; color: #1c1f19;
   display: flex; flex-direction: column; padding: 22px 48px 40px;
 }
 .projector-header {
   display: flex; justify-content: space-between; align-items: center;
-  gap: 16px; padding-bottom: 18px; border-bottom: 1px solid #1e241c; flex-wrap: wrap;
+  gap: 16px; padding-bottom: 18px; border-bottom: 1px solid #e3e4da; flex-wrap: wrap;
 }
 .projector-title { display: flex; align-items: center; gap: 12px; font-size: 17px; font-weight: 700; letter-spacing: 0.1em; }
 .projector-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .lang-switcher { display: flex; gap: 6px; }
-.lang-switcher .btn-sm { border-color: #37403a; background: #121512; color: #c3cac1; }
-.lang-switcher .btn-sm.active { background: var(--gold, #f2c94c); border-color: var(--gold, #f2c94c); color: #10130f; }
+.lang-switcher .btn-sm { border-color: #d2d4c8; background: #fff; color: #2c302a; }
+.lang-switcher .btn-sm.active { background: var(--primary, #0b3d2e); border-color: var(--primary, #0b3d2e); color: #fff; }
 .font-scaler { display: flex; gap: 6px; }
 .projector-main { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 40px 0; gap: 6px; }
 .projector-layout {
@@ -341,15 +346,20 @@ h1, h2, h3, h4 { line-height: 1.25; margin: 0; }
   width: 100%;
   display: flex;
   justify-content: center;
-  background: #000;
-  border: 1px solid #1f221d;
+  background: #0b0d0b;
+  border: 1px solid #e7e8de;
   border-radius: 10px;
   overflow: hidden;
 }
-.projector-current { display: flex; flex-direction: column; gap: 22px; line-height: 1.5; text-align: center; }
-.projector-arabic { color: var(--gold, #f2c94c); font-weight: 600; direction: rtl; font-family: var(--font-arabic); line-height: 1.45; }
-.projector-divider { height: 2px; background: #2a2f28; width: 200px; margin: 0 auto; }
-.projector-translation { color: #fff; font-weight: 700; }
+.projector-current {
+  display: flex; flex-direction: column; gap: 22px; line-height: 1.5; text-align: center;
+  background: #fff; border: 1px solid #e7e8de; border-top: 3px solid #0b3d2e;
+  border-radius: 16px; padding: 26px 30px;
+  box-shadow: var(--shadow-card, 0 1px 2px rgba(22, 26, 20, 0.05));
+}
+.projector-arabic { color: #2e332c; font-weight: 600; direction: rtl; font-family: var(--font-arabic); line-height: 1.45; }
+.projector-divider { height: 2px; background: #e3e4da; width: 200px; margin: 0 auto; }
+.projector-translation { color: #1c1f19; font-weight: 700; }
 .projector-waiting { text-align: center; }
 .pulse-ring {
   width: 58px; height: 58px; margin: 6px auto 22px; border-radius: 50%;
@@ -363,17 +373,17 @@ h1, h2, h3, h4 { line-height: 1.25; margin: 0; }
   100% { box-shadow: 0 0 0 0 rgba(242, 201, 76, 0); }
 }
 .projector-history {
-  margin-top: 20px; opacity: 0.4;
+  margin-top: 20px; opacity: 0.55;
   display: flex; flex-direction: column; gap: 12px; text-align: center;
   transition: opacity 0.3s ease;
 }
-.projector-history:hover { opacity: 0.85; }
+.projector-history:hover { opacity: 0.95; }
 .projector-history-item { display: flex; flex-direction: column; gap: 4px; }
-.hist-ar { direction: rtl; font-family: var(--font-arabic); font-size: 17px; color: #dcd0b8; line-height: 1.5; }
-.hist-tr { font-size: 15px; color: #a7aea4; }
+.hist-ar { direction: rtl; font-family: var(--font-arabic); font-size: 17px; color: #5a6156; line-height: 1.5; }
+.hist-tr { font-size: 15px; color: #6d7368; }
 .projector-screen .room-code-tag {
-  background: rgba(255, 255, 255, 0.07); color: #cdd4c9;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #e7e9e1; color: #4d534a;
+  border: 1px solid #d2d4c8;
 }
 
 /* ---- 6. Login page ------------------------------------------------------ */
@@ -564,6 +574,10 @@ h1, h2, h3, h4 { line-height: 1.25; margin: 0; }
   gap: 14px; margin: 0; padding: 14px 20px; flex-wrap: wrap;
 }
 .cockpit-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* ADR-0017: the per-room language picker gets its own row, so a long catalog
+   list can never squeeze the Start / Go LIVE buttons. */
+.room-lang-pick { flex-basis: 100%; }
+.room-lang-pick .label { font-size: 12px; font-weight: 600; color: var(--muted, #6d7368); }
 .room-code-tag {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12px; font-weight: 700; letter-spacing: 0.05em;

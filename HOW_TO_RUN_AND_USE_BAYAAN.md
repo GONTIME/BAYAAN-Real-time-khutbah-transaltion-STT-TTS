@@ -297,7 +297,7 @@ Do this with the brain (Window A) and website (Window B) **both running**.
 4. Three page types share the same BAYAAN install:
    - **Operator cockpit**: `http://localhost:5173/` — requires the login above.
    - **Worshipper mobile view**: `http://localhost:5173/r/<ROOM_CODE>` — what worshippers see on their smartphones (lightweight, live captions, language switcher, no login needed).
-   - **Mosque projector display**: `http://localhost:5173/projector/<ROOM_CODE>` — full-screen high-contrast mode for projectors and TV walls (shows captions + the video feed when one is set).
+   - **Mosque projector display**: `http://localhost:5173/projector/<ROOM_CODE>` — full-screen large-font mode for projectors and TV walls (shows captions + the video feed when one is set). It uses the **same light surface as the phone view**, so the wall and the phones match.
 
 > ⚠️ Safety note (real mosques): the operator cockpit requires its login, but the worshipper room page intentionally needs none. Keep the operator PC with the cockpit address + credentials in trusted hands only — never print that address on the room QR or share it publicly.
 
@@ -347,14 +347,17 @@ DRAFT -> REVIEW -> APPROVED -> PUBLISHED
 A **Room** is one live sermon event. The **QR code** is how worshippers join with their phones. No sermon file is needed for this:
 
 1. Open the dashboard (`http://localhost:5173/`) — you're already logged in.
-2. On the **Live** tab click **Start Room**. You instantly get a **room code**, a **QR code**, and a **join link** (`/r/<CODE>`).
-3. Click **Go live** (this moves the room CREATED → READY → LIVE; the badge turns green).
-4. Share the QR: worshippers scan it (or you type the link) and land on the room page for that code.
+2. On the **Live** tab pick the **languages for this room** (the row of language buttons above **Start Room**). They start ticked for every language your server is configured for — untick any you don't need today.
+3. Click **Start Room**. You instantly get a **room code**, a **QR code**, and a **join link** (`/r/<CODE>`).
+4. Click **Go live** (this moves the room CREATED → READY → LIVE; the badge turns green).
+5. Share the QR: worshippers scan it (or you type the link) and land on the room page for that code.
+
+> Adding a language you don't see (e.g. **اردو Urdu**, **Türkçe**, **Kiswahili**)? See **"Adding more languages"** below — the list is a curated catalog, and every screen follows whatever you enable.
 
 What the worshipper sees (the room page / phone):
 
 - A **LIVE / IDLE** badge at the top.
-- Language buttons: **Italiano / English**. Tap one.
+- Language buttons, one per language **this room** broadcasts (e.g. **Italiano / English**, or **اردو** for an Urdu room). Tap one.
 - A checkbox **العربية** — tick it to also show the original Arabic under each line.
 - The big current line + history of earlier lines scrolling below.
 - A **🔊 / 🔇 audio control**. By default it reads **"🔇 Audio off (server)"** — that is honest: spoken audio is locked on the server (§201). See "Turning on spoken audio" below.
@@ -403,7 +406,7 @@ How to use it:
 
 What is happening (simple): the browser sends a small JPEG picture ~10 times a second to the server; the server keeps only the newest frame and re-serves it to the projector/phones. No camera app, no codec setup.
 
-> The camera needs a **secure context** (https or `localhost`) and a **LIVE** session — that's why the button is disabled until the room is live. If the connection is rejected (e.g. session ended), the camera is released automatically and you get an honest error.
+> The camera needs a **secure context** (https or `localhost`) and a **LIVE** session — the button stays disabled until the room is live, and the dashboard asks the server *before* opening your webcam, so a refusal shows the real reason instead of switching the camera on and straight back off.
 
 ### Opening the room on phones on the same Wi-Fi
 
@@ -502,6 +505,66 @@ If "Generate drafts" ever fails, the console shows the exact reason (e.g. the cl
 
 > **Privacy, clearly stated:** the room page itself sends nothing anywhere; captions come from the mosque's own server. Two things involve a third party, and both are explicit operator choices: (1) cloud translation (above), and (2) the optional **browser speech** mode on the operator microphone, which clearly asks for your consent before it starts (it uses the browser vendor's speech service — decline = the server's own ASR path is used instead).
 
+### Post the translation to a Telegram channel (optional, 5 minutes)
+
+Want people who are not in the mosque to follow the khutbah? BAYAAN can mirror
+every finished caption line — the Arabic source line plus each translated
+language — into a Telegram channel or bot chat. It is **off by default**.
+
+1. **Create the bot.** In Telegram, chat with **@BotFather** → send `/newbot` →
+   follow its questions. It replies with a token like `123456789:AAE...`. Keep it
+   secret: anyone who has it controls the bot.
+2. **Add the bot to your channel as an ADMIN.** Open the channel → Manage →
+   Administrators → Add Admin → choose your bot. A bot cannot post to a channel
+   without this step.
+3. **Put the settings in `backend\.env`:**
+
+   ```
+   BAYAAN_TELEGRAM__ENABLED=true
+   BAYAAN_TELEGRAM__BOT_TOKEN=123456789:AAE...your-token...
+   BAYAAN_TELEGRAM__CHAT_ID=@your_channel_name
+   ```
+
+   Use `@your_channel_name` for a public channel, the `-100...` id for a private
+   channel, or a numeric id for a group/private chat. To switch the mirror off
+   again, set `BAYAAN_TELEGRAM__ENABLED=false`.
+
+   > ⚠️ **Do not use the bot's own `@username` as the chat id.** `CHAT_ID` is
+   > *where* the messages go, not *who* sends them: `@256bot`-style values
+   > fail with `403 Forbidden: the bot can't send messages to the bot`.
+   > For a **private chat (DM)** you need your own numeric id: open the bot in
+   > Telegram, press **Start** (or send it any message), then ask the bot's
+   > `getUpdates` API — the `chat.id` in the reply is the number to use. For a
+   > **channel** the bot must be an admin (step 2) and the id is
+   > `@channelusername` (public) or `-100...` (private).
+4. **Restart the brain** (Window A) so the new settings load.
+5. **Test it before going live** (PowerShell, using your operator login —
+   `admin:admin` unless you changed it):
+
+   ```powershell
+   curl.exe -u admin:admin -X POST http://127.0.0.1:8000/api/v1/diagnostics/test-telegram
+   ```
+
+   `"success": true` means the token, the chat id and the bot's admin rights are
+   all correct. `"chat not found"` = wrong chat id (redo step 3); a message about
+   the bot not being an admin = redo step 2. The reply never contains your token.
+6. **Use BAYAAN as usual.** Every line the room shows now also appears in
+   Telegram:
+
+   ```
+   Bayaan · room ABC12345 · line #12
+   ar (العربية): <the spoken Arabic line>
+   it (Italiano): <the Italian translation>
+   en (English): <the English translation>
+   ```
+
+> **What Telegram never gets:** anything the safety gate held back. If a line was
+> blocked, the channel shows exactly what the room shows ("Translation
+> unavailable"), never an internal reason. Posts are silent by default (no
+> notification ping) — set `BAYAAN_TELEGRAM__DISABLE_NOTIFICATION=false` if you
+> want the channel to ping. If Telegram is unreachable, captions keep working and
+> the failures are counted in `/api/v1/metrics`.
+
 ## 5. Glossary — the "holy words dictionary" (3 minutes, important!)
 
 Some Arabic religious words must **always** translate the same way (e.g. الصلاة → prayer, never "worship" or "ritual"). The glossary enforces this.
@@ -512,6 +575,65 @@ Some Arabic religious words must **always** translate the same way (e.g. الص�
 
 When a prepared sermon segment contains an approved glossary word, the review panel highlights it ("glossary hit") and the translation is expected to use exactly the approved word. Approved terms are versioned — every published translation records which glossary version it was reviewed against, so nothing changes underneath you later.
 
+## 5b. Adding more languages (5 minutes, no code)
+
+BAYAAN ships with **Italiano + English**. You can add any language from the
+curated catalog — no code, no restart-of-everything, and every screen follows
+your choice (room page buttons, the diagnostics test, the Telegram mirror, the
+`.srt` export, and what the translator actually translates).
+
+The supported list is: `it en fr ur id bn fa ps tr sw de es` →
+Italian, English, French, Urdu, Indonesian, Bengali, Persian, Pashto, Turkish,
+Swahili, German, Spanish.
+
+**Step 1 — enable the languages (the "list he chooses from")**
+
+1. Open the **Control Panel** (`Start Bayaan (Control Panel).bat`, then
+   `http://127.0.0.1:8765/`).
+2. Go to the **Languages** group → `BAYAAN_LANGUAGES__TARGET_LANGUAGES`.
+3. Tick the languages you want (e.g. Italiano, English, اردو, Türkçe). Ticking is
+   the whole interface — you never type codes by hand, and a language that isn't
+   in the catalog simply isn't offered.
+4. Click **Save**, then **Restart backend**. On startup BAYAAN checks the list: a
+   code it does not support is refused *with the supported codes printed*, so a
+   typo can never silently produce a room nobody can read.
+
+**Step 2 — narrow it per room (optional)**
+
+On the **Live** tab, the row above **Start Room** lists the languages you just
+enabled, all ticked. Untick the ones you don't need for this sermon, then click
+**Start Room**. That room now translates *only* those languages — less waiting,
+less provider cost — and only those buttons appear on the worshippers' phones.
+The next room starts from your full configured list again.
+
+**Step 3 — test one line before the khutbah (10 seconds)**
+
+**Diagnostics** tab → *AI Providers & Health* → the **Target** buttons now show
+one button per configured language. Pick e.g. `اردو (ur)`, click **Run Test**,
+and you see the provider, the model and the latency for that language. (Before,
+anything except Italiano/English returned a `422` error — that is fixed.)
+
+**Step 4 — see WHY a line was held back (the safety card)**
+
+On the same **Diagnostics** tab there is a card called **Safety Holds — why a
+line was held back**. When the room shows the gray *"Translation unavailable"*
+text, this card tells you the reason BAYAAN recorded for that line — for example
+`asr_confidence below 0.6` (the microphone did not hear the imam clearly) or a
+validator code (a number, negation or Quran check failed). Worshippers never see
+these reasons; only you do, in the dashboard. Nothing about the safety rules was
+relaxed to make this work — the card just opens the black box for the operator.
+
+**What about spoken audio for the new language?**
+
+Text captions work for every language immediately. **Audio** needs a voice
+installed for that language (BAYAAN ships Piper voices for `ar`/`it`/`en` only),
+so a newly added language shows captions with audio off — honest text-first
+behaviour, never a guess. The language's own buttons still work normally.
+
+> **Safety is unchanged:** adding languages never loosens a safety rule. An
+> unverified Quran line still shows *"Translation unavailable"* instead of a
+> machine translation, in every language (§78/§134).
+
 ## 6. Where to click — cheat-sheet for the cockpit
 
 The one-page cockpit has four tabs. A quick map:
@@ -519,6 +641,7 @@ The one-page cockpit has four tabs. A quick map:
 | You want to... | Go to |
 |---|---|
 | Start a room, go live, sell test lines, watch the live feed, add a video/camera feed | 🎙️ **Live Broadcast Cockpit** |
+| Add a language (Urdu, Turkish, Swahili...) or narrow a room's languages | **Control Panel → Languages** (tick list) + the language row above **Start Room** |
 | Upload sermons, review segments, approve drafts, manage glossary | 📖 **Khutbah Studio** |
 | See health, providers, latency, run a translation test | **Diagnostics** |
 | Browse + approve Quran/Hadith scripture references | **Scripture** |
@@ -549,7 +672,7 @@ The one-page cockpit has four tabs. A quick map:
 |---|---|
 | LIVE (green) / IDLE (gray) | Is the sermon happening right now? |
 | `connecting / open / closed` | Is my phone connected? `open` = good. |
-| Italiano / English buttons | Tap to switch language. Your choice is remembered. |
+| Italiano / English buttons | One button per language **this room** broadcasts — tap to switch. Your choice is remembered. A room started with Urdu shows an **اردو** button here. |
 | العربية checkbox | Also show the original Arabic under each line. |
 | Video box (when the operator enabled it) | The live feed, once the operator turns it on for the room. |
 | Big current line | The newest caption. |
@@ -585,14 +708,19 @@ BAYAAN is strict on purpose. These are not bugs; they are the product:
 | Phone can't open the room at all | QR points at `127.0.0.1` (PC-only) | Set `BAYAAN_PUBLIC_BASE_URL` to your LAN address, bind servers with `--host 0.0.0.0` / `npm run dev -- --host`, start a fresh room (see "same Wi-Fi" above) |
 | No captions on the room page | No audio is being fed to the session | On the **Live Broadcast Cockpit** (room LIVE) click **Send test line** — a translated caption appears. For real audio, wire the mixer/mic path |
 | Generate drafts fails | MT provider chain is down (cloud key missing, or Ollama not running) | The console shows the exact reason. Fix it (start Ollama / set the key) and click **Generate drafts** again — retry is safe |
+| A language I enabled is missing (no button, or `422 unknown target language(s)`) | The backend was not restarted after saving, **or** the room was started with a narrower language set | Restart the backend so it reloads `BAYAAN_LANGUAGES__TARGET_LANGUAGES`; then check the language buttons above **Start Room** on the **Live** tab — a room only broadcasts what was ticked when it was started. Start a new room to change it |
+| Translation test says `not configured on this server` | You tested a language that is not in your configured list | Enable it in the Control Panel → **Languages** (tick list) and restart the backend — the message names the configured targets |
 | Video feed shows "🎬 unavailable + Retry" | The feed URL can't be reached from the server's network | Confirm the stream is reachable *from the PC* (not just your phone); check the address/kind; click Retry |
 | Video feed plays on nothing / black box | Wrong kind chosen for that URL | Re-pick the kind on the Live tab (e.g. an `.m3u8` link must be HLS, not MP4) and Save |
+| Camera turns on then **closes after ~1 second** | The camera button was pressed while the room was not **LIVE** — the server refuses to relay a non-live session, and the old UI only said "closed" | Fixed: the button stays disabled until the room is LIVE, and the dashboard asks the server *first* (`/camera/ready`). If it refuses you get the exact reason (e.g. *"The room must be LIVE … Click Go LIVE first"*) and the webcam is never switched on. If it closes mid-sermon, read the toast — it names the cause (frames rejected → camera in use by another app; relay disabled → `BAYAAN_CAMERA__CAPTURE_ENABLED`) |
 | "Start PC Camera" does nothing | Not a secure context or no LIVE session | Use `http://localhost:5173` (or https); start the room and go live first |
 | Camera shows feed on the PC but not the projector | Feed was never saved as the camera kind | Starting the camera now saves it automatically; if you stopped it, click **Start PC Camera** again (one click re-arms the feed) |
 | No audio / "🔇 Audio off (server)" | Server TTS is locked (§201) | Set `BAYAAN_SAFETY__TTS_ENABLED=true` (+ `BAYAAN_PROVIDERS__TTS=piper`) in `backend\.env` and **restart the backend** |
 | Audio on, but phones stay silent | Backend not restarted after installing the engine/voices; phone's audio toggle not tapped; or phone is on the source language `ar` (no Arabic TTS is emitted — only target languages) | Restart uvicorn so it picks up `PIPER_EXEC`/`PIPER_VOICE_DIR`; on each phone tap **🔊 Audio on** (autoplay policy needs the tap); select a target language (`English`/`Italiano`). Check `/api/v1/preflight` → `tts_engine` is `OK` |
 | Captions stuck on `connecting` | Phone Wi-Fi / backend down | Same Wi-Fi as PC? Window A running? Reload the page |
 | `(.venv)` missing in Window A | Forgot to activate | Run `.\venv\Scripts\Activate.ps1` before starting uvicorn |
+| After **End Broadcast** there is no button to start the next room | Old build (fixed): the closed room stayed in the cockpit with status ENDED, which matched none of the buttons (Start / Go LIVE / End) | Update + reload the dashboard: closing a room now returns the cockpit to **IDLE** immediately (message *"Room … closed. You can start a new room now."*) and **Start New Live Room** is clickable again — no page refresh |
+| Control Panel: typing in a setting does nothing / the value jumps back | Old panel build (fixed): every keystroke re-rendered the list and stole the focus, so only the first character ever registered | Restart the Control Panel, then type normally — the row is highlighted, the **Save** bar appears, and **Save** writes `backend\.env` (restart the servers afterwards to apply) |
 | `npm install` errors about a "peer dependency" | Expected with Vite 8 | Use `npm install --legacy-peer-deps` (Section 2 Step 3) |
 
 Still stuck? Copy the **last 20 lines** of the red text in the blue window and show them to whoever set up the PC — that text is the clue.
@@ -635,8 +763,8 @@ Still stuck? Copy the **last 20 lines** of the red text in the blue window and s
 
 - `README.md` — the short technical summary (for IT people).
 - `BAYAAN_MASTER_SPEC.md` — the full rule book (§§0–217, for developers).
-- `docs/adr/` — why each big decision was made (0001–0015).
-- Want proof the safety works? In Window A (activated): `python -m pytest -q` → **`317 passed`**.
+- `docs/adr/` — why each big decision was made (0001–0018).
+- Want proof the safety works? In Window A (activated): `python -m pytest -q` → **`405 passed`**.
 
 ---
 

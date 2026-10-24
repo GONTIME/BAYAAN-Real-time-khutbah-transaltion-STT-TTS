@@ -69,6 +69,7 @@ class LiveIngestService:
         tts_service=None,
         health=None,
         alerts=None,
+        notifier=None,
     ) -> None:
         self._settings = settings
         self._asr = asr
@@ -79,6 +80,13 @@ class LiveIngestService:
         # §57/§195: optional runtime health + alerts wired by the API layer.
         self._health = health
         self._alerts = alerts
+        # ADR-0016: optional Telegram caption mirror. None/disabled = the live
+        # path is untouched, so captions behave exactly as before.
+        self._notifier = notifier
+        # ADR-0017: the target languages of each session (per-room selection),
+        # cached per session exactly like the room code below - a caption line
+        # must never cost an extra DB read.
+        self._session_languages: dict[uuid.UUID, list[str]] = {}
         self._fmt = PcmFormat(
             sample_rate=settings.audio.sample_rate,
             channels=settings.audio.channels,
@@ -92,6 +100,10 @@ class LiveIngestService:
         self._aligner = SermonAligner(settings.alignment)
         self._validator = Validator(settings.validation)
         self._previous_alignment_order: dict[uuid.UUID, int | None] = {}
+        # ADR-0016: room code per room for the mirror header. Resolved at most
+        # once per session (never a DB read per caption line) and dropped with
+        # the session below.
+        self._room_codes: dict[uuid.UUID, str] = {}
 
     def set_broker(self, broker) -> None:
         """Wired by the API layer at startup (§184 explicit wiring)."""
@@ -100,6 +112,10 @@ class LiveIngestService:
     def release_session(self, session_id) -> None:
         """BUG-016: drop per-session alignment state on session end."""
         self._previous_alignment_order.pop(session_id, None)
+        # ADR-0016: the mirror header cache is per-session state too.
+        self._room_codes.pop(session_id, None)
+        # ADR-0017: so is the session's target-language list.
+        self._session_languages.pop(session_id, None)
 
     async def ingest_pcm(
         self, session_id: uuid.UUID, session_factory, pcm: bytes
@@ -440,6 +456,9 @@ class LiveIngestService:
                 alignment_score=alignment_score,
             )
             await self._broker.publish_caption(room_id, event)
+            # ADR-0016: mirror the SAME post-gate event to Telegram, so the
+            # channel can never show text the room suppressed (§0 rule 5).
+            await self._mirror_caption(room_id, event, db)
             # §194 Phase 5: hand the §80-approved candidates to the TTS service.
             # It re-gates with the real age at dequeue, so nothing unsafe/stale
             # is ever spoken (§80/§88). No-op when TTS is locked (§201).
@@ -504,7 +523,10 @@ class LiveIngestService:
                                    alignment_score=0.0):
         targets: dict[str, dict] = {}
         speakable: list[TtsCandidate] = []
-        for lang in self._settings.languages.target_languages:
+        # ADR-0017: the languages THIS session was started with (§63 per-room
+        # selection), not a global default - so a room configured for Urdu never
+        # spends provider calls on languages nobody in it selected.
+        for lang in await self._languages_for(session_id, db):
             target, candidate = await self._caption_for_language(
                 session_id, sequence, arabic, asr_confidence, lang, db,
                 content_type=content_type,
@@ -724,11 +746,74 @@ class LiveIngestService:
         if self._health is not None:
             self._health.set_degraded(reason)
 
-    def _unavailable_event(self, sequence: int, arabic: str) -> dict:
+    # -- ADR-0016 Telegram mirror helpers -------------------------------------
+    async def _mirror_caption(self, room_id, event: dict, db) -> None:
+        """Mirror one broadcast caption to Telegram, best-effort (§107).
+
+        The event handed over is the one already sent to the room - after the
+        §78 router, §79 validator and §95/§167 gate - so the mirror is a report
+        of published text, never a second publication path (§0 rule 5). It is a
+        no-op unless a notifier is wired AND configured, and it never raises: a
+        mirror must not be able to break captions.
+        """
+        if self._notifier is None or not getattr(self._notifier, "enabled", False):
+            return
+        try:
+            room_code = await self._room_code(room_id, db)
+            self._notifier.enqueue_caption(event, room_code)
+        except Exception:  # noqa: BLE001 - a mirror must never break captions
+            logger.exception(
+                "telegram mirror enqueue failed",
+                extra={"event": "telegram_mirror_error", "data": {}},
+            )
+
+    async def _languages_for(self, session_id, db) -> list[str]:
+        """Target languages for one session (ADR-0017), cached per session.
+
+        A room started with a per-room selection (``active_languages``) speaks
+        exactly those languages; a session without one - e.g. an older row, or a
+        room created straight from config - falls back to the configured
+        targets. Cached like the room code so a caption line never costs an
+        extra read (§149), and dropped by ``release_session``.
+        """
+        cached = self._session_languages.get(session_id)
+        if cached is not None:
+            return cached
+        from bayaan_server.db.repository import LiveSessionRepository
+
+        row = await LiveSessionRepository(db).get(session_id)
+        languages = (
+            list(row.active_languages)
+            if row is not None and row.active_languages
+            else list(self._settings.languages.target_languages)
+        )
+        self._session_languages[session_id] = languages
+        return languages
+
+    async def _room_code(self, room_id: uuid.UUID, db) -> str | None:
+        """Room code for the mirror header (ADR-0016), cached per session.
+
+        A mirror must never add a DB read per caption line, so the code is
+        looked up once and kept until ``release_session`` drops it (the BUG-016
+        pattern). None when the room is gone - the header line is then omitted
+        rather than invented (§0 rule 8).
+        """
+        cached = self._room_codes.get(room_id)
+        if cached is not None:
+            return cached
+        from bayaan_server.db.repository import RoomRepository
+
+        room = await RoomRepository(db).get(room_id)
+        if room is None:
+            return None
+        self._room_codes[room_id] = room.code
+        return room.code
+
+    def _unavailable_event(self, sequence: int, arabic: str, languages) -> dict:
         """§134/§178: every target shows the public fallback for an outage."""
         targets = {
             lang: {"text": PUBLIC_FALLBACK_MESSAGE, "state": "unavailable", "speak": False}
-            for lang in self._settings.languages.target_languages
+            for lang in languages
         }
         return {
             "type": "caption",
@@ -763,6 +848,13 @@ class LiveIngestService:
                 metadata={"sequence": sequence, "capability": "asr",
                           "reason": str(exc)[:200]},
             )
+            # NOTE (ADR-0016): outage notices are deliberately NOT mirrored to
+            # Telegram - the mirror carries translated caption lines only. This
+            # is a degraded-state signal and already reaches the operator via
+            # alerts (§195).
             await self._broker.publish_caption(
-                room_id, self._unavailable_event(sequence, "")
+                room_id,
+                self._unavailable_event(
+                    sequence, "", await self._languages_for(session_id, db)
+                ),
             )

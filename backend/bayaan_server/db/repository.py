@@ -234,6 +234,47 @@ class AuditLogRepository:
             )
         )
 
+    async def list_recent(
+        self, actions: list[AuditAction], limit: int = 20
+    ) -> list[dict]:
+        """Newest audit entries for the given actions (§98 read side).
+
+        Used by the operator diagnostics to explain WHY a line was blocked: the
+        public room only ever sees the §134 fallback message, while the operator
+        gets the reason the gate recorded (§168). Read-only - the log itself
+        stays append-only.
+        """
+        from sqlalchemy import select
+
+        stmt = (
+            select(AuditLogRow)
+            .where(AuditLogRow.action.in_([action.value for action in actions]))
+            .order_by(AuditLogRow.timestamp.desc())
+            .limit(max(1, min(limit, 200)))
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        entries: list[dict] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row.metadata_json or "{}")
+            except json.JSONDecodeError:
+                # A corrupt metadata blob is never guessed at (§0 rule 8); the
+                # entry is still listed, with the raw text kept for the operator.
+                metadata = {"raw": row.metadata_json}
+            entries.append(
+                {
+                    "id": str(row.id),
+                    "action": row.action,
+                    "target_id": str(row.target_id) if row.target_id else None,
+                    "timestamp": (
+                        row.timestamp.isoformat() if row.timestamp else None
+                    ),
+                    "metadata": metadata,
+                }
+            )
+        return entries
+
+
 class PublishedImmutableError(RuntimeError):
     """§41: a PUBLISHED version must never be modified in place."""
 
